@@ -1,0 +1,1007 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MedFlow — Order Management</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Sora:wght@300;400;500;600;700&family=Playfair+Display:wght@700&display=swap" rel="stylesheet">
+
+<!-- ══════════════════════════════════════════════
+     FIREBASE CONFIG — Replace with your own keys!
+     Get them free at: console.firebase.google.com
+     ══════════════════════════════════════════════ -->
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+  import { getDatabase, ref, push, onValue, update, serverTimestamp }
+    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+  // ▼▼▼ PASTE YOUR FIREBASE CONFIG HERE ▼▼▼
+  const firebaseConfig = {
+    apiKey:            "PASTE_YOUR_API_KEY",
+    authDomain:        "PASTE_YOUR_AUTH_DOMAIN",
+    databaseURL:       "PASTE_YOUR_DATABASE_URL",
+    projectId:         "PASTE_YOUR_PROJECT_ID",
+    storageBucket:     "PASTE_YOUR_STORAGE_BUCKET",
+    messagingSenderId: "PASTE_YOUR_MESSAGING_SENDER_ID",
+    appId:             "PASTE_YOUR_APP_ID"
+  };
+  // ▲▲▲ PASTE YOUR FIREBASE CONFIG HERE ▲▲▲
+
+  let db = null;
+  let firebaseReady = false;
+
+  try {
+    const app = initializeApp(firebaseConfig);
+    db = getDatabase(app);
+    firebaseReady = firebaseConfig.apiKey !== "PASTE_YOUR_API_KEY";
+  } catch(e) {
+    console.warn("Firebase not configured, running in offline mode.");
+  }
+
+  // Expose to global scope
+  window.__firebase = { db, ref, push, onValue, update, serverTimestamp, ready: firebaseReady };
+</script>
+
+<style>
+  :root {
+    --bg: #0a0f0d;
+    --surface: #111a14;
+    --surface2: #172019;
+    --border: #1e3022;
+    --green: #22c55e;
+    --green-dim: #16a34a;
+    --green-glow: rgba(34,197,94,0.12);
+    --amber: #f59e0b;
+    --red: #ef4444;
+    --blue: #3b82f6;
+    --purple: #a855f7;
+    --text: #e8f5e9;
+    --text-muted: #6b7f6e;
+    --text-dim: #4a5c4d;
+    --font-main: 'Sora', sans-serif;
+    --font-mono: 'DM Mono', monospace;
+    --radius: 12px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--font-main);
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+  body::before {
+    content:''; position:fixed; inset:0;
+    background-image:
+      linear-gradient(rgba(34,197,94,0.025) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(34,197,94,0.025) 1px, transparent 1px);
+    background-size: 44px 44px;
+    pointer-events:none; z-index:0;
+  }
+
+  /* ── HEADER ── */
+  header {
+    position:sticky; top:0; z-index:100;
+    background: rgba(10,15,13,0.94);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--border);
+    padding: 0 1.5rem;
+    display:flex; align-items:center; justify-content:space-between;
+    height: 62px;
+  }
+  .logo { display:flex; align-items:center; gap:10px; }
+  .logo-icon {
+    width:34px; height:34px;
+    background: linear-gradient(135deg, #22c55e, #16a34a);
+    border-radius:9px;
+    display:flex; align-items:center; justify-content:center;
+    font-size:17px;
+  }
+  .logo-text { font-family:'Playfair Display',serif; font-size:1.35rem; color:var(--green); }
+  .logo-sub  { font-family:var(--font-mono); font-size:0.6rem; color:var(--text-muted); letter-spacing:2px; text-transform:uppercase; }
+  .header-right { display:flex; align-items:center; gap:14px; }
+  .sync-badge {
+    display:flex; align-items:center; gap:6px;
+    font-family:var(--font-mono); font-size:0.68rem; color:var(--text-muted);
+    background:var(--surface); border:1px solid var(--border);
+    padding:4px 10px; border-radius:20px;
+  }
+  .sync-dot {
+    width:6px; height:6px; border-radius:50%;
+    background:var(--text-dim);
+    transition: background 0.3s;
+  }
+  .sync-dot.live { background:var(--green); animation:pulse 2s infinite; }
+  @keyframes pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:0.5;transform:scale(1.4)} }
+  .time-display { font-family:var(--font-mono); font-size:0.75rem; color:var(--text-muted); }
+
+  /* ── LAYOUT ── */
+  .app { position:relative; z-index:1; max-width:1300px; margin:0 auto; padding:1.5rem; }
+
+  /* ── SYNC NOTICE BANNER ── */
+  .banner {
+    display:none;
+    background: rgba(245,158,11,0.08);
+    border: 1px solid rgba(245,158,11,0.25);
+    border-radius:10px;
+    padding:10px 16px;
+    font-size:0.82rem;
+    color:var(--amber);
+    margin-bottom:1.5rem;
+    align-items:center; gap:10px;
+  }
+  .banner.show { display:flex; }
+  .banner a { color:var(--green); text-decoration:underline; }
+
+  /* ── STATS ── */
+  .stats-bar {
+    display:grid; grid-template-columns:repeat(5,1fr); gap:10px; margin-bottom:1.5rem;
+  }
+  .stat-card {
+    background:var(--surface); border:1px solid var(--border); border-radius:var(--radius);
+    padding:.9rem 1rem; text-align:center; transition:border-color 0.2s;
+  }
+  .stat-card:hover { border-color:var(--green-dim); }
+  .stat-num  { font-family:var(--font-mono); font-size:1.55rem; color:var(--green); line-height:1; }
+  .stat-label{ font-size:0.68rem; color:var(--text-muted); margin-top:4px; text-transform:uppercase; letter-spacing:.5px; }
+
+  /* ── TABS ── */
+  .tabs {
+    display:flex; gap:4px;
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:var(--radius); padding:5px; margin-bottom:1.5rem; width:fit-content;
+  }
+  .tab {
+    padding:9px 20px; border-radius:9px; border:none;
+    background:transparent; color:var(--text-muted);
+    font-family:var(--font-main); font-size:0.83rem; font-weight:500;
+    cursor:pointer; transition:all 0.2s; display:flex; align-items:center; gap:7px;
+  }
+  .tab:hover { color:var(--text); }
+  .tab.active { background:var(--green); color:#0a0f0d; font-weight:600; }
+  .tab .cnt {
+    font-family:var(--font-mono); font-size:0.68rem; font-weight:700;
+    background:rgba(0,0,0,0.18); padding:1px 7px; border-radius:20px;
+  }
+  .tab:not(.active) .cnt { background:var(--surface2); color:var(--green); }
+
+  /* ── PANELS ── */
+  .panel { display:none; animation:fadeIn .25s ease; }
+  .panel.active { display:block; }
+  @keyframes fadeIn { from{opacity:0;transform:translateY(6px)} to{opacity:1;transform:translateY(0)} }
+
+  /* ── SECTION TITLE ── */
+  .sec-title { font-size:1.15rem; font-weight:600; margin-bottom:1.2rem; display:flex; align-items:center; gap:8px; }
+  .sec-title span { color:var(--green); }
+
+  /* ── FORM CARD ── */
+  .form-card {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:16px; padding:1.8rem; margin-bottom:1.5rem;
+  }
+  .form-grid { display:grid; grid-template-columns:1fr 1fr; gap:1rem; margin-bottom:1.2rem; }
+  .fg { display:flex; flex-direction:column; gap:5px; }
+  .fg.full { grid-column:1/-1; }
+  label { font-family:var(--font-mono); font-size:0.67rem; color:var(--text-muted); letter-spacing:1.5px; text-transform:uppercase; }
+  input, select, textarea {
+    background:var(--surface2); border:1px solid var(--border);
+    border-radius:9px; padding:10px 13px; color:var(--text);
+    font-family:var(--font-main); font-size:0.88rem; outline:none; width:100%;
+    transition:border-color .2s, box-shadow .2s;
+  }
+  input:focus, select:focus, textarea:focus {
+    border-color:var(--green-dim); box-shadow:0 0 0 3px var(--green-glow);
+  }
+  select option { background:var(--surface2); }
+  textarea { resize:vertical; min-height:72px; }
+
+  /* ── MED ROWS ── */
+  .meds-box {
+    background:var(--surface2); border:1px solid var(--border);
+    border-radius:10px; padding:1.1rem; margin-bottom:1.2rem;
+  }
+  .meds-hdr { display:flex; justify-content:space-between; align-items:center; margin-bottom:.8rem; }
+  .meds-hdr-label { font-family:var(--font-mono); font-size:0.68rem; color:var(--text-muted); letter-spacing:1.5px; text-transform:uppercase; }
+  .med-row { display:grid; grid-template-columns:2fr 0.8fr 1.1fr auto; gap:8px; margin-bottom:8px; align-items:center; }
+  .med-row input { font-size:0.83rem; padding:8px 11px; }
+  .rm-btn {
+    width:32px; height:32px; border-radius:7px; border:1px solid var(--border);
+    background:transparent; color:var(--text-muted); cursor:pointer; font-size:1rem;
+    display:flex; align-items:center; justify-content:center; transition:all .2s;
+  }
+  .rm-btn:hover { background:rgba(239,68,68,.1); border-color:var(--red); color:var(--red); }
+
+  /* ── BUTTONS ── */
+  .btn {
+    padding:10px 20px; border-radius:9px; border:none; cursor:pointer;
+    font-family:var(--font-main); font-size:0.85rem; font-weight:600;
+    transition:all .2s; display:inline-flex; align-items:center; gap:7px;
+  }
+  .btn-primary { background:var(--green); color:#0a0f0d; }
+  .btn-primary:hover { background:#16a34a; transform:translateY(-1px); box-shadow:0 4px 18px rgba(34,197,94,.3); }
+  .btn-secondary { background:var(--surface2); color:var(--text); border:1px solid var(--border); }
+  .btn-secondary:hover { border-color:var(--green-dim); color:var(--green); }
+  .btn-ghost { background:transparent; color:var(--green); border:1px dashed var(--green-dim); font-size:0.8rem; }
+  .btn-ghost:hover { background:var(--green-glow); }
+  .btn-sm { padding:6px 13px; font-size:0.78rem; border-radius:8px; }
+  .btn-danger { background:rgba(239,68,68,.1); color:var(--red); border:1px solid rgba(239,68,68,.3); }
+  .btn-danger:hover { background:rgba(239,68,68,.2); }
+  .form-actions { display:flex; gap:10px; justify-content:flex-end; border-top:1px solid var(--border); padding-top:1.2rem; }
+
+  /* ── FILTERS ── */
+  .filters { display:flex; gap:9px; margin-bottom:1.2rem; flex-wrap:wrap; align-items:center; }
+  .search-wrap { position:relative; flex:1; min-width:180px; }
+  .search-wrap input { padding-left:36px; }
+  .search-icon { position:absolute; left:11px; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:.85rem; }
+  .fil-sel { width:auto; min-width:130px; }
+
+  /* ── ORDER CARDS ── */
+  .orders-list { display:flex; flex-direction:column; gap:10px; }
+  .order-card {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:14px; padding:1.1rem 1.3rem;
+    transition:border-color .2s, box-shadow .2s;
+    animation:slideIn .3s ease;
+  }
+  @keyframes slideIn { from{opacity:0;transform:translateX(-8px)} to{opacity:1;transform:translateX(0)} }
+  .order-card:hover { border-color:var(--green-dim); box-shadow:0 0 18px var(--green-glow); }
+  .card-top { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:.7rem; }
+  .order-id { font-family:var(--font-mono); font-size:0.72rem; color:var(--green); letter-spacing:1px; margin-bottom:2px; }
+  .order-patient { font-size:.98rem; font-weight:600; }
+  .order-meta { font-size:.76rem; color:var(--text-muted); margin-top:2px; }
+
+  /* Status badges */
+  .badge {
+    padding:4px 13px; border-radius:20px;
+    font-family:var(--font-mono); font-size:0.68rem; font-weight:500; white-space:nowrap;
+  }
+  .b-pending   { background:rgba(245,158,11,.1);  color:var(--amber);  border:1px solid rgba(245,158,11,.3); }
+  .b-ordered   { background:rgba(59,130,246,.1);  color:var(--blue);   border:1px solid rgba(59,130,246,.3); }
+  .b-received  { background:rgba(34,197,94,.1);   color:var(--green);  border:1px solid rgba(34,197,94,.3); }
+  .b-ready     { background:rgba(168,85,247,.1);  color:var(--purple); border:1px solid rgba(168,85,247,.3); }
+  .b-delivered { background:rgba(34,197,94,.2);   color:#4ade80;       border:1px solid rgba(74,222,128,.4); }
+  .b-cancelled { background:rgba(239,68,68,.08);  color:var(--red);    border:1px solid rgba(239,68,68,.3); }
+
+  /* Med pills */
+  .med-pills { display:flex; gap:5px; flex-wrap:wrap; margin:.6rem 0; }
+  .med-pill {
+    background:var(--surface2); border:1px solid var(--border);
+    border-radius:6px; padding:3px 9px;
+    font-size:0.75rem; font-family:var(--font-mono);
+  }
+  .med-pill em { color:var(--text-muted); font-style:normal; margin-left:4px; }
+
+  /* Progress bar */
+  .progress { display:flex; align-items:center; margin:.9rem 0; overflow-x:auto; }
+  .step-wrap { display:flex; flex-direction:column; align-items:center; flex-shrink:0; }
+  .step-dot {
+    width:26px; height:26px; border-radius:50%;
+    border:2px solid var(--border); background:var(--surface2);
+    display:flex; align-items:center; justify-content:center;
+    font-size:0.6rem; color:var(--text-muted); transition:all .3s;
+  }
+  .step-dot.done   { background:var(--green); border-color:var(--green); color:#0a0f0d; font-weight:700; }
+  .step-dot.active { border-color:var(--amber); color:var(--amber); box-shadow:0 0 10px rgba(245,158,11,.3); }
+  .step-lbl { font-size:0.6rem; color:var(--text-dim); margin-top:3px; white-space:nowrap; }
+  .step-line { height:2px; width:36px; background:var(--border); flex-shrink:0; transition:background .3s; }
+  .step-line.done { background:var(--green); }
+
+  /* Card footer */
+  .card-footer { display:flex; justify-content:space-between; align-items:center; margin-top:.9rem; padding-top:.9rem; border-top:1px solid var(--border); flex-wrap:wrap; gap:8px; }
+  .card-ts { font-family:var(--font-mono); font-size:0.68rem; color:var(--text-dim); }
+  .card-actions { display:flex; gap:7px; flex-wrap:wrap; align-items:center; }
+  .st-select {
+    background:var(--surface2); border:1px solid var(--border); border-radius:8px;
+    color:var(--text); font-family:var(--font-main); font-size:0.78rem;
+    padding:5px 10px; cursor:pointer; outline:none;
+  }
+  .st-select:focus { border-color:var(--green-dim); }
+
+  /* Empty */
+  .empty { text-align:center; padding:3.5rem 2rem; color:var(--text-muted); }
+  .empty-icon { font-size:2.8rem; margin-bottom:.8rem; opacity:.25; }
+  .empty p { font-size:0.88rem; }
+
+  /* Modal */
+  .modal-bg {
+    position:fixed; inset:0; background:rgba(0,0,0,.72);
+    backdrop-filter:blur(5px); z-index:200;
+    display:none; align-items:center; justify-content:center; padding:1rem;
+  }
+  .modal-bg.open { display:flex; }
+  .modal {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:18px; padding:1.8rem; max-width:540px; width:100%;
+    max-height:90vh; overflow-y:auto; animation:modalIn .25s ease;
+  }
+  @keyframes modalIn { from{opacity:0;transform:scale(.96)} to{opacity:1;transform:scale(1)} }
+  .modal-hdr { display:flex; justify-content:space-between; align-items:center; margin-bottom:1.3rem; }
+  .modal-title { font-size:1.05rem; font-weight:600; }
+  .modal-close { background:none; border:none; color:var(--text-muted); font-size:1.2rem; cursor:pointer; }
+  .modal-close:hover { color:var(--text); }
+  .det-row { display:flex; justify-content:space-between; padding:9px 0; border-bottom:1px solid var(--border); font-size:.85rem; }
+  .det-row:last-child { border:none; }
+  .det-k { color:var(--text-muted); font-family:var(--font-mono); font-size:.7rem; text-transform:uppercase; }
+  .det-v { color:var(--text); font-weight:500; text-align:right; max-width:60%; }
+
+  /* Toast */
+  .toast-area { position:fixed; bottom:1.5rem; right:1.5rem; z-index:300; display:flex; flex-direction:column; gap:8px; }
+  .toast {
+    background:var(--surface); border:1px solid var(--green-dim);
+    border-radius:10px; padding:11px 16px; font-size:.83rem;
+    box-shadow:0 8px 28px rgba(0,0,0,.4); animation:toastIn .3s ease;
+    display:flex; align-items:center; gap:9px; max-width:300px;
+    transition:opacity .3s, transform .3s;
+  }
+  .toast.err { border-color:var(--red); }
+  @keyframes toastIn { from{opacity:0;transform:translateX(16px)} to{opacity:1;transform:translateX(0)} }
+
+  /* ── SETUP WIZARD ── */
+  .setup-overlay {
+    position:fixed; inset:0; background:rgba(0,0,0,.9);
+    backdrop-filter:blur(8px); z-index:500;
+    display:flex; align-items:center; justify-content:center; padding:1rem;
+  }
+  .setup-box {
+    background:var(--surface); border:1px solid var(--border);
+    border-radius:20px; padding:2.2rem; max-width:580px; width:100%;
+    animation:modalIn .3s ease;
+  }
+  .setup-title { font-family:'Playfair Display',serif; font-size:1.6rem; color:var(--green); margin-bottom:.5rem; }
+  .setup-sub { font-size:.85rem; color:var(--text-muted); margin-bottom:1.8rem; line-height:1.6; }
+  .setup-step {
+    background:var(--surface2); border:1px solid var(--border);
+    border-radius:10px; padding:1rem 1.2rem; margin-bottom:1rem;
+    display:flex; gap:12px; align-items:flex-start;
+  }
+  .step-num {
+    width:28px; height:28px; border-radius:50%; background:var(--green);
+    color:#0a0f0d; font-weight:700; font-size:.8rem;
+    display:flex; align-items:center; justify-content:center; flex-shrink:0;
+  }
+  .step-txt { font-size:.84rem; line-height:1.5; }
+  .step-txt strong { color:var(--green); }
+  .step-txt a { color:var(--blue); text-decoration:none; }
+  .step-txt a:hover { text-decoration:underline; }
+  .setup-form-grid { display:grid; grid-template-columns:1fr 1fr; gap:.8rem; margin:1.2rem 0; }
+  .setup-form-grid input { font-size:.8rem; padding:8px 11px; }
+  .setup-note { font-size:.75rem; color:var(--text-dim); margin-top:.5rem; line-height:1.5; }
+  .setup-btns { display:flex; gap:10px; margin-top:1.5rem; }
+  .skip-link { background:none; border:none; color:var(--text-muted); font-size:.8rem; cursor:pointer; text-decoration:underline; padding:0; font-family:var(--font-main); }
+  .skip-link:hover { color:var(--text); }
+
+  @media(max-width:768px){
+    .form-grid,.stats-bar,.setup-form-grid { grid-template-columns:1fr; }
+    .stats-bar { grid-template-columns:repeat(2,1fr); }
+    .med-row { grid-template-columns:1fr 1fr; }
+    header { padding:0 1rem; }
+    .app { padding:1rem; }
+    .tabs { width:100%; }
+    .tab { flex:1; justify-content:center; font-size:.78rem; padding:8px 10px; }
+  }
+</style>
+</head>
+<body>
+
+<!-- ══ SETUP WIZARD (shows when Firebase not configured) ══ -->
+<div class="setup-overlay" id="setupOverlay" style="display:none;">
+  <div class="setup-box">
+    <div class="setup-title">🏥 Welcome to MedFlow</div>
+    <div class="setup-sub">
+      To enable <strong style="color:var(--green)">real-time sync</strong> across all employees,
+      connect your free Firebase database. Takes 3 minutes.<br>
+      <em style="color:var(--text-dim)">Or skip to use offline mode (data stays on this device only).</em>
+    </div>
+
+    <div class="setup-step">
+      <div class="step-num">1</div>
+      <div class="step-txt">
+        Go to <a href="https://console.firebase.google.com" target="_blank">console.firebase.google.com</a>
+        → Click <strong>Add Project</strong> → Name it (e.g. "my-medical-shop") → Continue → Create Project
+      </div>
+    </div>
+    <div class="setup-step">
+      <div class="step-num">2</div>
+      <div class="step-txt">
+        Inside your project → Click <strong>Web (&lt;/&gt;)</strong> icon →
+        Register app → Copy the <strong>firebaseConfig</strong> values shown
+      </div>
+    </div>
+    <div class="setup-step">
+      <div class="step-num">3</div>
+      <div class="step-txt">
+        Go to <strong>Build → Realtime Database</strong> → Create database →
+        Choose a region → Start in <strong>Test Mode</strong> → Enable
+      </div>
+    </div>
+    <div class="setup-step">
+      <div class="step-num">4</div>
+      <div class="step-txt">Paste your config values below:</div>
+    </div>
+
+    <div class="setup-form-grid">
+      <div class="fg"><label>API Key</label><input id="cfg_apiKey" placeholder="AIzaSy..."></div>
+      <div class="fg"><label>Auth Domain</label><input id="cfg_authDomain" placeholder="myapp.firebaseapp.com"></div>
+      <div class="fg"><label>Database URL</label><input id="cfg_dbUrl" placeholder="https://myapp-default-rtdb.firebaseio.com"></div>
+      <div class="fg"><label>Project ID</label><input id="cfg_projectId" placeholder="my-medical-shop"></div>
+      <div class="fg"><label>Storage Bucket</label><input id="cfg_storageBucket" placeholder="myapp.appspot.com"></div>
+      <div class="fg"><label>App ID</label><input id="cfg_appId" placeholder="1:123456:web:abc..."></div>
+    </div>
+    <div class="setup-note">⚠️ These keys are saved only in your browser. Share this page URL with employees — they enter the same keys once on their device.</div>
+
+    <div class="setup-btns">
+      <button class="btn btn-primary" onclick="saveFirebaseConfig()">🔥 Connect Firebase & Sync</button>
+      <button class="skip-link" onclick="skipSetup()">Skip — use offline mode</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ HEADER ══ -->
+<header>
+  <div class="logo">
+    <div class="logo-icon">💊</div>
+    <div>
+      <div class="logo-text">MedFlow</div>
+      <div class="logo-sub">Order Management</div>
+    </div>
+  </div>
+  <div class="header-right">
+    <div class="sync-badge"><div class="sync-dot" id="syncDot"></div><span id="syncLabel">Offline</span></div>
+    <div class="time-display" id="clock"></div>
+  </div>
+</header>
+
+<!-- ══ APP ══ -->
+<div class="app">
+
+  <!-- Banner when offline -->
+  <div class="banner" id="offlineBanner">
+    ⚠️ Running in <strong>offline mode</strong> — data only saves on this device.
+    <a href="#" onclick="document.getElementById('setupOverlay').style.display='flex'; return false;">Connect Firebase</a> to sync across all employees.
+  </div>
+
+  <!-- Stats -->
+  <div class="stats-bar">
+    <div class="stat-card"><div class="stat-num" id="s-total">0</div><div class="stat-label">Total</div></div>
+    <div class="stat-card"><div class="stat-num" id="s-pending" style="color:var(--amber)">0</div><div class="stat-label">Pending</div></div>
+    <div class="stat-card"><div class="stat-num" id="s-ordered" style="color:var(--blue)">0</div><div class="stat-label">Ordered</div></div>
+    <div class="stat-card"><div class="stat-num" id="s-received" style="color:var(--purple)">0</div><div class="stat-label">Received</div></div>
+    <div class="stat-card"><div class="stat-num" id="s-delivered" style="color:#4ade80">0</div><div class="stat-label">Delivered</div></div>
+  </div>
+
+  <!-- Tabs -->
+  <div class="tabs">
+    <button class="tab active" data-tab="new"    onclick="goTab(this,'new')">✏️ New Order</button>
+    <button class="tab"        data-tab="orders" onclick="goTab(this,'orders')">📋 Orders <span class="cnt" id="cnt-orders">0</span></button>
+    <button class="tab"        data-tab="track"  onclick="goTab(this,'track')">🔍 Track</button>
+  </div>
+
+  <!-- ── NEW ORDER ── -->
+  <div class="panel active" id="panel-new">
+    <div class="sec-title">✏️ Create <span>New Order</span></div>
+    <div class="form-card">
+      <div class="form-grid">
+        <div class="fg">
+          <label>Patient Name *</label>
+          <input id="f-patient" placeholder="e.g. Ramesh Kumar">
+        </div>
+        <div class="fg">
+          <label>Phone Number</label>
+          <input id="f-phone" type="tel" placeholder="e.g. 9876543210">
+        </div>
+        <div class="fg">
+          <label>Doctor Name</label>
+          <input id="f-doctor" placeholder="e.g. Dr. Sharma">
+        </div>
+        <div class="fg">
+          <label>Priority</label>
+          <select id="f-priority">
+            <option value="normal">🟢 Normal</option>
+            <option value="urgent">🔴 Urgent</option>
+            <option value="scheduled">📅 Scheduled Refill</option>
+          </select>
+        </div>
+        <div class="fg full">
+          <label>Employee Name (who is placing this order)</label>
+          <input id="f-employee" placeholder="Your name">
+        </div>
+        <div class="fg full">
+          <label>Notes / Special Instructions</label>
+          <textarea id="f-notes" placeholder="Allergies, special instructions, home delivery details..."></textarea>
+        </div>
+      </div>
+
+      <div class="meds-box">
+        <div class="meds-hdr">
+          <span class="meds-hdr-label">💊 Medicines Required</span>
+          <button class="btn btn-ghost btn-sm" onclick="addMed()">+ Add Medicine</button>
+        </div>
+        <div style="display:grid;grid-template-columns:2fr 0.8fr 1.1fr auto;gap:8px;margin-bottom:5px;">
+          <div style="font-family:var(--font-mono);font-size:.62rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">Name</div>
+          <div style="font-family:var(--font-mono);font-size:.62rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">Qty</div>
+          <div style="font-family:var(--font-mono);font-size:.62rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:1px;">Dosage/Form</div>
+          <div></div>
+        </div>
+        <div id="medRows"></div>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-secondary" onclick="clearForm()">Clear</button>
+        <button class="btn btn-primary"   onclick="submitOrder()">🚀 Place Order</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── ORDERS ── -->
+  <div class="panel" id="panel-orders">
+    <div class="sec-title">📋 All <span>Orders</span></div>
+    <div class="filters">
+      <div class="search-wrap">
+        <span class="search-icon">🔍</span>
+        <input id="f-search" placeholder="Search patient, order ID, medicine..." oninput="renderOrders()">
+      </div>
+      <select class="fil-sel" id="f-status" onchange="renderOrders()">
+        <option value="">All Statuses</option>
+        <option value="pending">Pending</option>
+        <option value="ordered">Ordered from Supplier</option>
+        <option value="received">Medicine Received</option>
+        <option value="ready">Ready for Pickup</option>
+        <option value="delivered">Delivered</option>
+        <option value="cancelled">Cancelled</option>
+      </select>
+      <select class="fil-sel" id="f-pri" onchange="renderOrders()">
+        <option value="">All Priorities</option>
+        <option value="urgent">Urgent</option>
+        <option value="normal">Normal</option>
+        <option value="scheduled">Scheduled</option>
+      </select>
+    </div>
+    <div class="orders-list" id="ordersList"></div>
+  </div>
+
+  <!-- ── TRACK ── -->
+  <div class="panel" id="panel-track">
+    <div class="sec-title">🔍 Track <span>Order</span></div>
+    <div class="form-card" style="max-width:460px;">
+      <div class="fg" style="margin-bottom:1rem;">
+        <label>Order ID or Patient Name</label>
+        <input id="f-track" placeholder="e.g. ORD-0001 or Ramesh Kumar" onkeydown="if(event.key==='Enter')trackOrder()">
+      </div>
+      <button class="btn btn-primary" onclick="trackOrder()">🔍 Search</button>
+    </div>
+    <div id="trackResult"></div>
+  </div>
+
+</div>
+
+<!-- Detail Modal -->
+<div class="modal-bg" id="detailModal" onclick="if(event.target===this)closeModal()">
+  <div class="modal">
+    <div class="modal-hdr">
+      <div class="modal-title">📄 Order Details</div>
+      <button class="modal-close" onclick="closeModal()">✕</button>
+    </div>
+    <div id="modalBody"></div>
+  </div>
+</div>
+
+<!-- Toasts -->
+<div class="toast-area" id="toastArea"></div>
+
+<script>
+// ══════════════════════════════════════════════════════════
+//  STATE
+// ══════════════════════════════════════════════════════════
+let orders = {};            // { firebaseKey: orderObj }
+let orderCounter = 0;
+let useFirebase = false;
+let fbDB = null, fbRef, fbPush, fbOnValue, fbUpdate, fbServerTs;
+
+const STATUSES = [
+  { key:'pending',   label:'Pending',              icon:'⏳', cls:'b-pending'   },
+  { key:'ordered',   label:'Ordered from Supplier',icon:'📦', cls:'b-ordered'   },
+  { key:'received',  label:'Medicine Received',    icon:'✅', cls:'b-received'  },
+  { key:'ready',     label:'Ready for Pickup',     icon:'🔔', cls:'b-ready'     },
+  { key:'delivered', label:'Delivered to Patient', icon:'🎉', cls:'b-delivered' },
+  { key:'cancelled', label:'Cancelled',            icon:'❌', cls:'b-cancelled' },
+];
+const ST_IDX = Object.fromEntries(STATUSES.map((s,i)=>[s.key,i]));
+const getSt = k => STATUSES.find(s=>s.key===k) || STATUSES[0];
+
+// ══════════════════════════════════════════════════════════
+//  INIT
+// ══════════════════════════════════════════════════════════
+window.addEventListener('DOMContentLoaded', () => {
+  updateClock();
+  setInterval(updateClock, 1000);
+  addMed();
+  initStorage();
+});
+
+function initStorage() {
+  const fb = window.__firebase;
+  const saved = localStorage.getItem('medflow_fb_config');
+
+  if(fb && fb.ready) {
+    // Config baked into HTML
+    connectFirebase(fb.db, fb.ref, fb.push, fb.onValue, fb.update, fb.serverTimestamp);
+  } else if(saved) {
+    // Config saved by user previously — reload required, show banner
+    document.getElementById('offlineBanner').classList.add('show');
+    loadOffline();
+    showToast('⚠️ Reload page to activate saved Firebase config', 'err');
+  } else {
+    // Check if this is first visit
+    const skipped = localStorage.getItem('medflow_skip_setup');
+    if(!skipped) {
+      document.getElementById('setupOverlay').style.display = 'flex';
+    } else {
+      document.getElementById('offlineBanner').classList.add('show');
+      loadOffline();
+    }
+  }
+}
+
+function connectFirebase(db, refFn, pushFn, onValueFn, updateFn, tsFn) {
+  fbDB = db; fbRef = refFn; fbPush = pushFn;
+  fbOnValue = onValueFn; fbUpdate = updateFn; fbServerTs = tsFn;
+  useFirebase = true;
+
+  document.getElementById('syncDot').classList.add('live');
+  document.getElementById('syncLabel').textContent = 'Live Sync ✓';
+
+  // Listen for real-time changes
+  const ordersRef = fbRef(fbDB, 'orders');
+  fbOnValue(ordersRef, snap => {
+    orders = snap.val() || {};
+    orderCounter = Object.keys(orders).length;
+    updateStats();
+    const active = document.querySelector('.tab.active')?.dataset?.tab;
+    if(active === 'orders') renderOrders();
+    document.getElementById('cnt-orders').textContent = Object.keys(orders).length;
+  });
+}
+
+function loadOffline() {
+  const raw = localStorage.getItem('medflow_orders');
+  orders = raw ? JSON.parse(raw) : {};
+  orderCounter = parseInt(localStorage.getItem('medflow_counter') || '0');
+  updateStats();
+  document.getElementById('cnt-orders').textContent = Object.keys(orders).length;
+}
+
+function saveOffline() {
+  localStorage.setItem('medflow_orders', JSON.stringify(orders));
+  localStorage.setItem('medflow_counter', orderCounter.toString());
+}
+
+// ══════════════════════════════════════════════════════════
+//  SETUP WIZARD ACTIONS
+// ══════════════════════════════════════════════════════════
+function saveFirebaseConfig() {
+  const cfg = {
+    apiKey:            document.getElementById('cfg_apiKey').value.trim(),
+    authDomain:        document.getElementById('cfg_authDomain').value.trim(),
+    databaseURL:       document.getElementById('cfg_dbUrl').value.trim(),
+    projectId:         document.getElementById('cfg_projectId').value.trim(),
+    storageBucket:     document.getElementById('cfg_storageBucket').value.trim(),
+    appId:             document.getElementById('cfg_appId').value.trim(),
+  };
+  if(!cfg.apiKey || !cfg.databaseURL) {
+    showToast('❗ At minimum, paste API Key and Database URL', 'err'); return;
+  }
+  localStorage.setItem('medflow_fb_config', JSON.stringify(cfg));
+  showToast('✅ Config saved! The page owner needs to paste these into the HTML file for permanent sync.', 'success');
+  document.getElementById('setupOverlay').style.display = 'none';
+  document.getElementById('offlineBanner').classList.add('show');
+  loadOffline();
+  showToast('📌 Share your Firebase config with the developer to update index.html', 'success');
+}
+
+function skipSetup() {
+  localStorage.setItem('medflow_skip_setup', '1');
+  document.getElementById('setupOverlay').style.display = 'none';
+  document.getElementById('offlineBanner').classList.add('show');
+  loadOffline();
+}
+
+// ══════════════════════════════════════════════════════════
+//  TABS
+// ══════════════════════════════════════════════════════════
+function goTab(btn, name) {
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  document.getElementById('panel-'+name).classList.add('active');
+  btn.classList.add('active');
+  if(name==='orders') renderOrders();
+  if(name==='track') document.getElementById('trackResult').innerHTML='';
+}
+
+// ══════════════════════════════════════════════════════════
+//  MEDICINE ROWS
+// ══════════════════════════════════════════════════════════
+let mrc = 0;
+function addMed(name='', qty='', dos='') {
+  mrc++;
+  const d = document.createElement('div');
+  d.className = 'med-row'; d.id = 'mr'+mrc;
+  d.innerHTML = `
+    <input placeholder="Medicine name" value="${name}">
+    <input type="number" placeholder="Qty" value="${qty}" min="1">
+    <input placeholder="500mg / Tablet" value="${dos}">
+    <button class="rm-btn" onclick="this.parentElement.remove()">✕</button>
+  `;
+  document.getElementById('medRows').appendChild(d);
+}
+
+function getMeds() {
+  return [...document.querySelectorAll('#medRows .med-row')]
+    .map(r => {
+      const i = r.querySelectorAll('input');
+      return { name:i[0].value.trim(), qty:i[1].value||'1', dosage:i[2].value.trim() };
+    }).filter(m=>m.name);
+}
+
+// ══════════════════════════════════════════════════════════
+//  SUBMIT ORDER
+// ══════════════════════════════════════════════════════════
+function submitOrder() {
+  const patient = document.getElementById('f-patient').value.trim();
+  if(!patient) { showToast('❗ Patient name is required', 'err'); return; }
+  const meds = getMeds();
+  if(!meds.length) { showToast('❗ Add at least one medicine', 'err'); return; }
+
+  orderCounter++;
+  const id = 'ORD-' + String(orderCounter).padStart(4,'0');
+  const now = new Date().toISOString();
+  const order = {
+    id, patient,
+    phone:    document.getElementById('f-phone').value.trim(),
+    doctor:   document.getElementById('f-doctor').value.trim(),
+    priority: document.getElementById('f-priority').value,
+    employee: document.getElementById('f-employee').value.trim() || 'Staff',
+    notes:    document.getElementById('f-notes').value.trim(),
+    medicines: meds,
+    status:   'pending',
+    history:  [{ status:'pending', time:now, by: document.getElementById('f-employee').value.trim()||'Staff' }],
+    createdAt: now, updatedAt: now,
+  };
+
+  if(useFirebase) {
+    fbPush(fbRef(fbDB,'orders'), order)
+      .then(() => {
+        showToast(`✅ ${id} placed & synced to all employees!`, 'success');
+        clearForm();
+        goTab(document.querySelectorAll('.tab')[1], 'orders');
+      })
+      .catch(e => showToast('❗ Firebase error: '+e.message, 'err'));
+  } else {
+    const key = 'local_' + Date.now();
+    orders[key] = order;
+    saveOffline();
+    updateStats();
+    document.getElementById('cnt-orders').textContent = Object.keys(orders).length;
+    showToast(`✅ ${id} created (offline mode)`, 'success');
+    clearForm();
+    goTab(document.querySelectorAll('.tab')[1], 'orders');
+    renderOrders();
+  }
+}
+
+function clearForm() {
+  ['f-patient','f-phone','f-doctor','f-employee','f-notes'].forEach(id => document.getElementById(id).value='');
+  document.getElementById('f-priority').value = 'normal';
+  document.getElementById('medRows').innerHTML = '';
+  mrc = 0; addMed();
+}
+
+// ══════════════════════════════════════════════════════════
+//  RENDER ORDERS
+// ══════════════════════════════════════════════════════════
+function renderOrders(target='ordersList') {
+  const q   = (document.getElementById('f-search')?.value||'').toLowerCase();
+  const stF = document.getElementById('f-status')?.value||'';
+  const prF = document.getElementById('f-pri')?.value||'';
+
+  const all = Object.entries(orders)
+    .map(([k,o])=>({...o, _key:k}))
+    .sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+
+  const filtered = all.filter(o =>
+    (!q || o.patient?.toLowerCase().includes(q) || o.id?.toLowerCase().includes(q) ||
+     o.medicines?.some(m=>m.name.toLowerCase().includes(q))) &&
+    (!stF || o.status===stF) &&
+    (!prF || o.priority===prF)
+  );
+
+  const el = document.getElementById(target);
+  if(!filtered.length) {
+    el.innerHTML = `<div class="empty"><div class="empty-icon">📭</div><p>No orders found</p></div>`;
+    return;
+  }
+  el.innerHTML = filtered.map(o=>orderCard(o)).join('');
+}
+
+function orderCard(o) {
+  const st  = getSt(o.status);
+  const pri = o.priority==='urgent'?'🔴 URGENT':o.priority==='scheduled'?'📅 Scheduled':'🟢 Normal';
+  const dt  = new Date(o.createdAt).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+  const pills = (o.medicines||[]).map(m=>`<div class="med-pill">${m.name}<em>×${m.qty}${m.dosage?' · '+m.dosage:''}</em></div>`).join('');
+  const steps = STATUSES.filter(s=>s.key!=='cancelled');
+  const ci = ST_IDX[o.status]??0;
+  let prog = '';
+  if(o.status!=='cancelled') {
+    prog = `<div class="progress">`+steps.map((s,i)=>{
+      const done=i<ci, active=i===ci;
+      const cls=done?'done':active?'active':'';
+      const line=i<steps.length-1?`<div class="step-line ${(done||active)?'done':''}"></div>`:'';
+      return `<div style="display:flex;align-items:center;">
+        <div class="step-wrap">
+          <div class="step-dot ${cls}">${done?'✓':s.icon}</div>
+          <div class="step-lbl">${s.label.split(' ')[0]}</div>
+        </div>${line}</div>`;
+    }).join('')+`</div>`;
+  }
+
+  const opts = STATUSES.map(s=>`<option value="${s.key}" ${s.key===o.status?'selected':''}>${s.icon} ${s.label}</option>`).join('');
+
+  return `<div class="order-card" id="card-${o._key}">
+    <div class="card-top">
+      <div>
+        <div class="order-id">${o.id} &nbsp;·&nbsp; ${pri}</div>
+        <div class="order-patient">${o.patient}${o.phone?` <span style="color:var(--text-muted);font-weight:400;font-size:.82rem;">· ${o.phone}</span>`:''}</div>
+        <div class="order-meta">${o.doctor?'Dr. '+o.doctor+' · ':''}${(o.medicines||[]).length} medicine(s)${o.employee?' · by '+o.employee:''}</div>
+      </div>
+      <span class="badge ${st.cls}">${st.icon} ${st.label}</span>
+    </div>
+    <div class="med-pills">${pills}</div>
+    ${prog}
+    <div class="card-footer">
+      <div class="card-ts">📅 ${dt}</div>
+      <div class="card-actions">
+        <select class="st-select" onchange="updateStatus('${o._key}',this.value)">${opts}</select>
+        <button class="btn btn-secondary btn-sm" onclick="showDetail('${o._key}')">👁 Details</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteOrder('${o._key}')">🗑</button>
+      </div>
+    </div>
+  </div>`;
+}
+
+// ══════════════════════════════════════════════════════════
+//  UPDATE STATUS
+// ══════════════════════════════════════════════════════════
+function updateStatus(key, newSt) {
+  const o = orders[key]; if(!o) return;
+  const now = new Date().toISOString();
+  const hist = [...(o.history||[]), { status:newSt, time:now, by:'Staff' }];
+
+  if(useFirebase) {
+    fbUpdate(fbRef(fbDB,'orders/'+key), { status:newSt, updatedAt:now, history:hist });
+  } else {
+    orders[key] = {...o, status:newSt, updatedAt:now, history:hist};
+    saveOffline(); renderOrders();
+  }
+  const s = getSt(newSt);
+  showToast(`${s.icon} ${o.id} → ${s.label}`, 'success');
+  updateStats();
+}
+
+// ══════════════════════════════════════════════════════════
+//  DELETE
+// ══════════════════════════════════════════════════════════
+function deleteOrder(key) {
+  if(!confirm('Delete this order?')) return;
+  if(useFirebase) {
+    const { remove } = window.__firebase;
+    // use update with null to delete
+    fbUpdate(fbRef(fbDB,'orders'), { [key]: null });
+  } else {
+    delete orders[key]; saveOffline(); renderOrders();
+  }
+  updateStats();
+  showToast('🗑 Order deleted', 'success');
+}
+
+// ══════════════════════════════════════════════════════════
+//  DETAIL MODAL
+// ══════════════════════════════════════════════════════════
+function showDetail(key) {
+  const o = orders[key]; if(!o) return;
+  const st = getSt(o.status);
+  const hist = (o.history||[]).map(h=>{
+    const s=getSt(h.status);
+    const t=new Date(h.time).toLocaleString('en-IN',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'});
+    return `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:.8rem;">
+      <span>${s.icon} ${s.label}${h.by?' <span style="color:var(--text-dim)">by '+h.by+'</span>':''}</span>
+      <span style="font-family:var(--font-mono);font-size:.68rem;color:var(--text-muted);">${t}</span>
+    </div>`;
+  }).join('');
+
+  const medList = (o.medicines||[]).map((m,i)=>
+    `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);font-size:.83rem;">
+      <span style="color:var(--green);">${i+1}. ${m.name}</span>
+      <span style="color:var(--text-muted);">×${m.qty} ${m.dosage||''}</span>
+    </div>`
+  ).join('');
+
+  document.getElementById('modalBody').innerHTML = `
+    <div class="det-row"><span class="det-k">Order ID</span><span class="det-v" style="font-family:var(--font-mono);color:var(--green)">${o.id}</span></div>
+    <div class="det-row"><span class="det-k">Patient</span><span class="det-v">${o.patient}</span></div>
+    <div class="det-row"><span class="det-k">Phone</span><span class="det-v">${o.phone||'—'}</span></div>
+    <div class="det-row"><span class="det-k">Doctor</span><span class="det-v">${o.doctor||'—'}</span></div>
+    <div class="det-row"><span class="det-k">Priority</span><span class="det-v">${o.priority}</span></div>
+    <div class="det-row"><span class="det-k">Status</span><span class="det-v"><span class="badge ${st.cls}">${st.icon} ${st.label}</span></span></div>
+    <div class="det-row"><span class="det-k">Placed by</span><span class="det-v">${o.employee||'—'}</span></div>
+    <div class="det-row"><span class="det-k">Notes</span><span class="det-v">${o.notes||'—'}</span></div>
+    <div class="det-row"><span class="det-k">Created</span><span class="det-v">${new Date(o.createdAt).toLocaleString('en-IN')}</span></div>
+    <div style="margin-top:1rem;">
+      <div style="font-family:var(--font-mono);font-size:.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Medicines</div>
+      ${medList}
+    </div>
+    <div style="margin-top:1rem;">
+      <div style="font-family:var(--font-mono);font-size:.65rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:1px;margin-bottom:6px;">Status History</div>
+      ${hist}
+    </div>
+    <div style="margin-top:1.3rem;display:flex;gap:9px;justify-content:flex-end;">
+      <button class="btn btn-primary btn-sm" onclick="closeModal()">Close</button>
+    </div>
+  `;
+  document.getElementById('detailModal').classList.add('open');
+}
+
+function closeModal() { document.getElementById('detailModal').classList.remove('open'); }
+
+// ══════════════════════════════════════════════════════════
+//  TRACK
+// ══════════════════════════════════════════════════════════
+function trackOrder() {
+  const q = document.getElementById('f-track').value.trim().toLowerCase();
+  if(!q) return;
+  const found = Object.entries(orders)
+    .map(([k,o])=>({...o,_key:k}))
+    .filter(o=>o.id?.toLowerCase().includes(q)||o.patient?.toLowerCase().includes(q));
+  const el = document.getElementById('trackResult');
+  if(!found.length) {
+    el.innerHTML=`<div class="empty"><div class="empty-icon">🔍</div><p>No orders found for "${q}"</p></div>`; return;
+  }
+  el.innerHTML = `<div class="orders-list">${found.map(o=>orderCard(o)).join('')}</div>`;
+}
+
+// ══════════════════════════════════════════════════════════
+//  STATS
+// ══════════════════════════════════════════════════════════
+function updateStats() {
+  const all = Object.values(orders);
+  const today = new Date().toDateString();
+  document.getElementById('s-total').textContent     = all.length;
+  document.getElementById('s-pending').textContent   = all.filter(o=>o.status==='pending').length;
+  document.getElementById('s-ordered').textContent   = all.filter(o=>o.status==='ordered').length;
+  document.getElementById('s-received').textContent  = all.filter(o=>o.status==='received').length;
+  document.getElementById('s-delivered').textContent = all.filter(o=>o.status==='delivered').length;
+  document.getElementById('cnt-orders').textContent  = all.length;
+}
+
+// ══════════════════════════════════════════════════════════
+//  TOAST
+// ══════════════════════════════════════════════════════════
+function showToast(msg, type='success') {
+  const area = document.getElementById('toastArea');
+  const t = document.createElement('div');
+  t.className = 'toast' + (type==='err'?' err':'');
+  t.textContent = msg;
+  area.appendChild(t);
+  setTimeout(()=>{ t.style.opacity='0'; t.style.transform='translateX(16px)'; setTimeout(()=>t.remove(),300); }, 3500);
+}
+
+// ══════════════════════════════════════════════════════════
+//  CLOCK
+// ══════════════════════════════════════════════════════════
+function updateClock() {
+  const n = new Date();
+  document.getElementById('clock').textContent =
+    n.toLocaleTimeString('en-IN',{hour:'2-digit',minute:'2-digit',second:'2-digit'}) +
+    ' · ' + n.toLocaleDateString('en-IN',{day:'2-digit',month:'short',year:'numeric'});
+}
+</script>
+</body>
+</html>
